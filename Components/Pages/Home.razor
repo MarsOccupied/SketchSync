@@ -1,0 +1,86 @@
+﻿@page "/"
+@inject NavigationManager NavigationManager
+
+<PageTitle>SketchSync - Instant Multiplayer Doodle Magic</PageTitle>
+
+<div class="sketchsync-container">
+    @if (string.IsNullOrEmpty(RoomId))
+    {
+        <div class="welcome-screen">
+            <h1>🎨 SketchSync</h1>
+            <p>Instant multiplayer doodling - no signup required!</p>
+
+            <div class="room-options">
+                <button class="btn-create" @onclick="CreateRoom">
+                    Create New Room
+                </button>
+                <div class="join-room">
+                    <input @bind="JoinRoomId" placeholder="Enter room code" maxlength="6" />
+                    <button class="btn-join" @onclick="JoinRoom" disabled="@string.IsNullOrWhiteSpace(JoinRoomId)">
+                        Join Room
+                    </button>
+                </div>
+            </div>
+
+            <div class="features">
+                <div class="feature">
+                    <span>👥</span>
+                    <span>Real-time collaboration</span>
+                </div>
+                <div class="feature">
+                    <span>🎨</span>
+                    <span>Freehand drawing & shapes</span>
+                </div>
+                <div class="feature">
+                    <span>💬</span>
+                    <span>Live chat</span>
+                </div>
+                <div class="feature">
+                    <span>🎯</span>
+                    <span>Pictionary mode</span>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <SketchRoom RoomId="@RoomId" />
+    }
+</div>
+
+@code {
+    private string? RoomId { get; set; }
+    private string JoinRoomId { get; set; } = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var uri = NavigationManager.ToAbsoluteUri(NavigationManager.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("room", out var roomId))
+        {
+            RoomId = roomId;
+        }
+    }
+
+    private void CreateRoom()
+    {
+        // Generate a random room ID and navigate to it
+        var roomId = GenerateRoomId();
+        NavigationManager.NavigateTo($"/?room={roomId}");
+    }
+
+    private void JoinRoom()
+    {
+        if (!string.IsNullOrWhiteSpace(JoinRoomId))
+        {
+            NavigationManager.NavigateTo($"/?room={JoinRoomId.ToUpper()}");
+        }
+    }
+
+    private string GenerateRoomId()
+    {
+        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        return new string(Enumerable.Repeat(chars, 6)
+            .Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
+    }
+}

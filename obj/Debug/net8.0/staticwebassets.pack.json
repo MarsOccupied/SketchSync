@@ -1,0 +1,45 @@
+{
+  "Files": [
+    {
+      "Id": "/Users/seppimirzaei/Downloads/SketchSync/SketchSync/obj/Debug/net8.0/scopedcss/projectbundle/SketchSync.bundle.scp.css",
+      "PackagePath": "staticwebassets/SketchSync.bundle.scp.css"
+    },
+    {
+      "Id": "/Users/seppimirzaei/Downloads/SketchSync/SketchSync/wwwroot/app.css",
+      "PackagePath": "staticwebassets/app.css"
+    },
+    {
+      "Id": "/Users/seppimirzaei/Downloads/SketchSync/SketchSync/wwwroot/bootstrap/bootstrap.min.css",
+      "PackagePath": "staticwebassets/bootstrap/bootstrap.min.css"
+    },
+    {
+      "Id": "/Users/seppimirzaei/Downloads/SketchSync/SketchSync/wwwroot/bootstrap/bootstrap.min.css.map",
+      "PackagePath": "staticwebassets/bootstrap/bootstrap.min.css.map"
+    },
+    {
+      "Id": "/Users/seppimirzaei/Downloads/SketchSync/SketchSync/wwwroot/favicon.png",
+      "PackagePath": "staticwebassets/favicon.png"
+    },
+    {
+      "Id": "/Users/seppimirzaei/Downloads/SketchSync/SketchSync/wwwroot/sketch.js",
+      "PackagePath": "staticwebassets/sketch.js"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.SketchSync.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.build.SketchSync.props",
+      "PackagePath": "build\\SketchSync.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildMultiTargeting.SketchSync.props",
+      "PackagePath": "buildMultiTargeting\\SketchSync.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildTransitive.SketchSync.props",
+      "PackagePath": "buildTransitive\\SketchSync.props"
+    }
+  ],
+  "ElementsToRemove": []
+}

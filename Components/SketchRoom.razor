@@ -1,0 +1,523 @@
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.JSInterop
+@using SketchSync.Models
+@using SketchSync.Hubs
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+<div class="sketch-room">
+    @if (!IsJoined)
+    {
+        <div class="join-form">
+            <h2>Join Room @RoomId</h2>
+            <div class="form-group">
+                <label>Your Name:</label>
+                <input @bind="UserName" placeholder="Enter your name" />
+            </div>
+            <div class="form-group">
+                <label>Cursor Color:</label>
+                <input type="color" @bind="UserColor" />
+            </div>
+            <button class="btn-join-room" @onclick="JoinRoomAsync" disabled="@(string.IsNullOrWhiteSpace(UserName))">
+                Join Room
+            </button>
+            <button class="btn-back" @onclick="GoBack">Back</button>
+        </div>
+    }
+    else
+    {
+        <div class="room-interface">
+            <div class="toolbar">
+                <div class="tools">
+                    <button class="tool @GetToolClass(DrawingType.Freehand)" @onclick="() => SelectTool(DrawingType.Freehand)">
+                        ✏️ Freehand
+                    </button>
+                    <button class="tool @GetToolClass(DrawingType.Rectangle)" @onclick="() => SelectTool(DrawingType.Rectangle)">
+                        □ Rectangle
+                    </button>
+                    <button class="tool @GetToolClass(DrawingType.Circle)" @onclick="() => SelectTool(DrawingType.Circle)">
+                        ⭕ Circle
+                    </button>
+                    <button class="tool @GetToolClass(DrawingType.Line)" @onclick="() => SelectTool(DrawingType.Line)">
+                        ― Line
+                    </button>
+                    <button class="tool @GetToolClass(DrawingType.Text)" @onclick="() => SelectTool(DrawingType.Text)">
+                        📝 Text
+                    </button>
+                    <div class="tool-container">
+                        <button class="tool @GetToolClass(DrawingType.Emoji)" @onclick="() => SelectTool(DrawingType.Emoji)">
+                            😊 Emoji
+                        </button>
+                        @if (CurrentTool == DrawingType.Emoji)
+                        {
+                            <div class="emoji-picker">
+                                @foreach (var emoji in GetEmojiList())
+                                {
+                                    <button class="emoji-option" @onclick="() => SelectEmoji(emoji)">@emoji</button>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="color-picker">
+                    <input type="color" @bind="CurrentColor" />
+                </div>
+                <div class="stroke-width">
+                    <label>Size:</label>
+                    <input type="range" min="1" max="20" @bind="CurrentStrokeWidth" />
+                    <span>@CurrentStrokeWidth</span>
+                </div>
+            </div>
+
+            <div class="canvas-container">
+                <canvas @ref="canvasRef"
+                        width="1200"
+                        height="800"
+                        @onmousedown="OnMouseDown"
+                        @onmousemove="OnMouseMove"
+                        @onmouseup="OnMouseUp"
+                        @onmouseleave="OnMouseUp">
+                </canvas>
+
+                <!-- Text Input Modal -->
+                @if (ShowTextInput)
+                {
+                    <div class="text-input-modal" style="left: @(TextInputX)px; top: @(TextInputY)px;">
+                        <input @bind="TextInputValue" @onkeydown="OnTextInputKeyDown" @onblur="SubmitTextInput" autofocus />
+                    </div>
+                }
+
+                <!-- Cursors -->
+                @foreach (var user in Room?.Users.Where(u => u.Id != CurrentUser?.Id) ?? new List<User>())
+                {
+                    <div class="user-cursor"
+                         style="left: @(user.CursorX)px; top: @(user.CursorY)px; color: @user.Color;">
+                        <div class="cursor-pointer">👆</div>
+                        <div class="cursor-name">@user.Name</div>
+                    </div>
+                }
+            </div>
+
+            <div class="sidebar">
+                <div class="users-list">
+                    <h3>Users (@(Room?.Users.Count ?? 0))</h3>
+                    @foreach (var user in Room?.Users ?? new List<User>())
+                    {
+                        <div class="user-item">
+                            <span class="user-color" style="background-color: @user.Color;"></span>
+                            <span class="user-name">@user.Name</span>
+                            @if (user.Id == CurrentUser?.Id)
+                            {
+                                <span class="you">(You)</span>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="chat">
+                    <h3>Chat</h3>
+                    <div class="chat-messages" @ref="chatMessagesRef">
+                        @foreach (var message in ChatMessages)
+                        {
+                            <div class="chat-message">
+                                <span class="chat-user">@message.UserName:</span>
+                                <span class="chat-text">@message.Message</span>
+                            </div>
+                        }
+                    </div>
+                    <div class="chat-input">
+                        <input @bind="ChatMessage" @onkeydown="OnChatKeyDown" placeholder="Type a message..." />
+                        <button @onclick="SendChatMessageAsync">Send</button>
+                    </div>
+                </div>
+
+                <div class="room-actions">
+                    <button class="btn-pictionary" @onclick="StartPictionaryAsync">
+                        🎯 Start Pictionary
+                    </button>
+                    <button class="btn-export">📤 Export</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string RoomId { get; set; } = string.Empty;
+
+    private HubConnection? hubConnection;
+    private ElementReference canvasRef;
+    private ElementReference? chatMessagesRef;
+    private bool IsJoined = false;
+    private string UserName = string.Empty;
+    private string UserColor = "#007bff";
+    private Room? Room;
+    private User? CurrentUser;
+    private DrawingType CurrentTool = DrawingType.Freehand;
+    private string CurrentColor = "#000000";
+    private int CurrentStrokeWidth = 2;
+    private bool IsDrawing = false;
+    private DrawingObject? CurrentDrawingObject;
+    private List<ChatMessage> ChatMessages = new();
+
+    private string ChatMessage = string.Empty;
+    private bool ShowTextInput = false;
+    private string TextInputValue = string.Empty;
+    private double TextInputX = 0;
+    private double TextInputY = 0;
+    private string SelectedEmoji = "😊";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitializeSignalR();
+    }
+
+    private async Task InitializeSignalR()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/sketchhub"))
+            .Build();
+
+        hubConnection.On<Room>("RoomJoined", async room =>
+        {
+            Room = room;
+            CurrentUser = room.Users.FirstOrDefault(u => u.Id == hubConnection?.ConnectionId);
+            IsJoined = true;
+            StateHasChanged();
+            await RedrawCanvas();
+        });
+
+        hubConnection.On<User>("UserJoined", user =>
+        {
+            if (Room != null && !Room.Users.Any(u => u.Id == user.Id))
+            {
+                Room.Users.Add(user);
+                StateHasChanged();
+            }
+        });
+
+        hubConnection.On<User>("UserLeft", user =>
+        {
+            if (Room != null)
+            {
+                Room.Users.RemoveAll(u => u.Id == user.Id);
+                StateHasChanged();
+            }
+        });
+
+        hubConnection.On<User>("CursorMoved", user =>
+        {
+            if (Room != null)
+            {
+                var existingUser = Room.Users.FirstOrDefault(u => u.Id == user.Id);
+                if (existingUser != null)
+                {
+                    existingUser.CursorX = user.CursorX;
+                    existingUser.CursorY = user.CursorY;
+                    StateHasChanged();
+                }
+            }
+        });
+
+        hubConnection.On<DrawingObject>("DrawingObjectAdded", async drawingObject =>
+        {
+            if (Room != null)
+            {
+                Room.DrawingObjects.Add(drawingObject);
+                await RedrawCanvas();
+            }
+        });
+
+        hubConnection.On<ChatMessage>("ChatMessageReceived", message =>
+        {
+            ChatMessages.Add(message);
+            StateHasChanged();
+            ScrollToBottom();
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task JoinRoomAsync()
+    {
+        if (hubConnection != null && !string.IsNullOrWhiteSpace(UserName))
+        {
+            await hubConnection.SendAsync("JoinRoom", RoomId, UserName, UserColor);
+        }
+    }
+
+    private void SelectTool(DrawingType tool)
+    {
+        CurrentTool = tool;
+    }
+
+    private string GetToolClass(DrawingType tool)
+    {
+        return CurrentTool == tool ? "active" : "";
+    }
+
+    private async Task OnMouseDown(MouseEventArgs e)
+    {
+        IsDrawing = true;
+        var rect = await GetCanvasRect();
+
+        var x = e.ClientX - rect.Left;
+        var y = e.ClientY - rect.Top;
+
+        CurrentDrawingObject = new DrawingObject
+        {
+            Type = CurrentTool,
+            Color = CurrentColor,
+            StrokeWidth = CurrentStrokeWidth,
+            X = x,
+            Y = y
+        };
+
+        if (CurrentTool == DrawingType.Freehand)
+        {
+            CurrentDrawingObject.Points.Add(new Point { X = x, Y = y });
+        }
+        else if (CurrentTool == DrawingType.Line)
+        {
+            CurrentDrawingObject.Points.Add(new Point { X = x, Y = y });
+        }
+    }
+
+    private async Task OnMouseMove(MouseEventArgs e)
+    {
+        var rect = await GetCanvasRect();
+        var x = e.ClientX - rect.Left;
+        var y = e.ClientY - rect.Top;
+
+        // Update cursor position for real-time sync
+        if (hubConnection != null && IsJoined)
+        {
+            await hubConnection.SendAsync("UpdateCursor", RoomId, x, y);
+        }
+
+        if (!IsDrawing || CurrentDrawingObject == null) return;
+
+        if (CurrentTool == DrawingType.Freehand)
+        {
+            CurrentDrawingObject.Points.Add(new Point { X = x, Y = y });
+            await RedrawCanvas();
+        }
+        else if (CurrentTool == DrawingType.Line)
+        {
+            // For line preview, update the second point
+            if (CurrentDrawingObject.Points.Count == 1)
+            {
+                CurrentDrawingObject.Points.Add(new Point { X = x, Y = y });
+            }
+            else
+            {
+                CurrentDrawingObject.Points[1] = new Point { X = x, Y = y };
+            }
+            await RedrawCanvas();
+        }
+        else if (CurrentTool == DrawingType.Rectangle || CurrentTool == DrawingType.Circle)
+        {
+            // Update shape dimensions for preview
+            CurrentDrawingObject.Width = x - CurrentDrawingObject.X;
+            CurrentDrawingObject.Height = y - CurrentDrawingObject.Y;
+            await RedrawCanvas();
+        }
+    }
+
+    private async Task OnMouseUp(MouseEventArgs e)
+    {
+        if (!IsDrawing || CurrentDrawingObject == null) return;
+
+        IsDrawing = false;
+
+        var rect = await GetCanvasRect();
+        var x = e.ClientX - rect.Left;
+        var y = e.ClientY - rect.Top;
+
+        // Finalize the drawing object
+        if (CurrentTool == DrawingType.Rectangle || CurrentTool == DrawingType.Circle)
+        {
+            CurrentDrawingObject.Width = x - CurrentDrawingObject.X;
+            CurrentDrawingObject.Height = y - CurrentDrawingObject.Y;
+        }
+        else if (CurrentTool == DrawingType.Line)
+        {
+            if (CurrentDrawingObject.Points.Count == 1)
+            {
+                CurrentDrawingObject.Points.Add(new Point { X = x, Y = y });
+            }
+            else
+            {
+                CurrentDrawingObject.Points[1] = new Point { X = x, Y = y };
+            }
+        }
+        else if (CurrentTool == DrawingType.Text)
+        {
+            // Show text input modal
+            TextInputX = x;
+            TextInputY = y;
+            TextInputValue = string.Empty;
+            ShowTextInput = true;
+            StateHasChanged();
+            return; // Don't finalize yet
+        }
+        else if (CurrentTool == DrawingType.Emoji)
+        {
+            // Place the selected emoji
+            CurrentDrawingObject.Text = SelectedEmoji;
+        }
+
+        // Send to server
+        if (hubConnection != null && CurrentDrawingObject != null)
+        {
+            await hubConnection.SendAsync("AddDrawingObject", RoomId, CurrentDrawingObject);
+        }
+
+        CurrentDrawingObject = null;
+        await RedrawCanvas();
+    }
+
+    private async Task<BoundingClientRect> GetCanvasRect()
+    {
+        try
+        {
+            return await JSRuntime.InvokeAsync<BoundingClientRect>("SketchSync.getCanvasRect", canvasRef);
+        }
+        catch
+        {
+            // Fallback for when JS interop fails
+            return new BoundingClientRect { Left = 0, Top = 0 };
+        }
+    }
+
+    private async Task RedrawCanvas()
+    {
+        try
+        {
+            var allObjects = Room?.DrawingObjects ?? new List<DrawingObject>();
+            if (CurrentDrawingObject != null)
+            {
+                allObjects = allObjects.Concat(new[] { CurrentDrawingObject }).ToList();
+            }
+
+            // TODO: Optimize canvas redrawing - currently redraws everything
+            // Should implement dirty rectangle updates for better performance
+            await JSRuntime.InvokeVoidAsync("SketchSync.redrawCanvas", canvasRef, allObjects);
+        }
+        catch
+        {
+            // TODO: Better error handling for canvas operations
+            // Handle JS interop errors gracefully
+        }
+    }
+
+    private async Task SendChatMessageAsync()
+    {
+        if (hubConnection != null && !string.IsNullOrWhiteSpace(ChatMessage))
+        {
+            await hubConnection.SendAsync("SendChatMessage", RoomId, ChatMessage);
+            ChatMessage = string.Empty;
+        }
+    }
+
+    private async Task OnChatKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SendChatMessageAsync();
+        }
+    }
+
+    private async Task OnTextInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SubmitTextInput();
+        }
+        else if (e.Key == "Escape")
+        {
+            CancelTextInput();
+        }
+    }
+
+    private async Task SubmitTextInput()
+    {
+        if (!string.IsNullOrWhiteSpace(TextInputValue) && CurrentDrawingObject != null)
+        {
+            CurrentDrawingObject.Text = TextInputValue;
+
+            // Send to server
+            if (hubConnection != null)
+            {
+                await hubConnection.SendAsync("AddDrawingObject", RoomId, CurrentDrawingObject);
+            }
+
+            CurrentDrawingObject = null;
+            await RedrawCanvas();
+        }
+
+        ShowTextInput = false;
+        StateHasChanged();
+    }
+
+    private void CancelTextInput()
+    {
+        ShowTextInput = false;
+        CurrentDrawingObject = null;
+        StateHasChanged();
+    }
+
+    private List<string> GetEmojiList()
+    {
+        return new List<string>
+        {
+            "😊", "😂", "😍", "🤔", "😎", "🤩", "😢", "😡",
+            "👍", "👎", "👌", "✌️", "🤞", "👏", "🙌", "🤝",
+            "❤️", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎",
+            "🌟", "⭐", "✨", "🔥", "💯", "🎉", "🎊", "🏆"
+        };
+    }
+
+    private void SelectEmoji(string emoji)
+    {
+        SelectedEmoji = emoji;
+        // Keep emoji tool selected but update the selected emoji
+    }
+
+    private async Task StartPictionaryAsync()
+    {
+        if (hubConnection != null)
+        {
+            await hubConnection.SendAsync("StartPictionary", RoomId);
+        }
+    }
+
+    private void GoBack()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+
+    private void ScrollToBottom()
+    {
+        // Scroll to bottom logic would go here
+    }
+
+    public void Dispose()
+    {
+        hubConnection?.DisposeAsync();
+    }
+
+    // BoundingClientRect class for JS interop
+    private class BoundingClientRect
+    {
+        public double Left { get; set; }
+        public double Top { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public double Right { get; set; }
+        public double Bottom { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+    }
+}
